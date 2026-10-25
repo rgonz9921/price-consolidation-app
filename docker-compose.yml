@@ -39,6 +39,8 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pricing}
       DB_USER: ${POSTGRES_USER:-pricing}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-pricing}
+      PROVIDER_A_URL: http://provider-a:9001
+      PROVIDER_B_URL: http://provider-b:9002
     ports:
       - "8080:8080"
     depends_on:
