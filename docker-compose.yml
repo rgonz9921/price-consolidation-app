@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pricing}
+      POSTGRES_USER: ${POSTGRES_USER:-pricing}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pricing}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  provider-a:
+    build: ./provider-stubs/provider-a
+    ports:
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9001/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  provider-b:
+    build: ./provider-stubs/provider-b
+    ports:
+      - "9002:9002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9002/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      provider-a:
+        condition: service_healthy
+      provider-b:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:

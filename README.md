@@ -109,7 +109,7 @@ Cada consulta sigue estos pasos:
 
 | Mecanismo | Proveedor A | Proveedor B |
 |---|---|---|
-| Timeout de conexión | 100 ms | por definir |
+| Timeout de conexión | 100 ms | 200 ms |
 | Timeout de lectura | 300 ms | 750 ms síncrono · 1000 ms asíncrono |
 | Reintentos | 1, con backoff de 50 ms + jitter, solo ante error de conexión o 5xx | Ninguno |
 | Circuit breaker | Ventana de 20 llamadas, mínimo 10. Abre con 50 % de fallos o 80 % de llamadas lentas (> 250 ms). 10 s abierto, 3 llamadas en semiabierto | Igual, con llamada lenta > 900 ms |
