@@ -1,0 +1,128 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #1f2328;
+  background: #ffffff;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+section {
+  margin-top: 32px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 8px;
+  border-bottom: 1px solid #d0d7de;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.rule-form {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border: 1px solid #d0d7de;
+}
+
+.rule-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.rule-form .checkbox {
+  display: flex;
+  align-items: center;
+}
+
+.rule-form small {
+  color: #b42318;
+}
+
+.price-panel form {
+  display: flex;
+  gap: 8px;
+}
+
+.price-panel dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+}
+
+.price-panel dt {
+  color: #57606a;
+}
+
+.price-panel dd {
+  margin: 0;
+}
+
+.final-price {
+  font-weight: 700;
+}
+
+.alert {
+  padding: 12px;
+  border: 1px solid #b42318;
+  background: #fef3f2;
+  color: #b42318;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+
+.badge-PROVIDER_A {
+  background: #dbeafe;
+}
+
+.badge-PROVIDER_B {
+  background: #ede9fe;
+}
+
+.badge-CACHE {
+  background: #dcfce7;
+}
+
+.badge-FALLBACK_CACHE,
+.badge-stale {
+  background: #fef3c7;
+}
+
+.badge-fresh {
+  background: #dcfce7;
+}
