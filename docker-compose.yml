@@ -35,6 +35,10 @@ services:
 
   backend:
     build: ./backend
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-pricing}
+      DB_USER: ${POSTGRES_USER:-pricing}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-pricing}
     ports:
       - "8080:8080"
     depends_on:
