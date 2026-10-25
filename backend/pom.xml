@@ -20,6 +20,7 @@
         <spotless.version>3.10.4</spotless.version>
         <palantir-java-format.version>2.102.0</palantir-java-format.version>
         <wiremock.version>3.13.2</wiremock.version>
+        <resilience4j.version>2.4.0</resilience4j.version>
     </properties>
 
     <dependencies>
@@ -51,6 +52,15 @@
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-spring-boot4</artifactId>
+            <version>${resilience4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
         <dependency>
