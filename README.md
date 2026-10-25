@@ -2,13 +2,41 @@
 
 Middleware de consulta consolidada de precios. Administra reglas comerciales por SKU (margen, proveedor preferido, estado) y, al consultar un precio, integra en tiempo real a dos proveedores externos con caché, failover y control de tasa. Incluye una SPA para gestionar las reglas y simular consultas.
 
+## Cómo ejecutarlo
+
+Requisito: Docker con Compose v2. Java, Node y PostgreSQL corren dentro de las imágenes.
+
+```bash
+docker compose up --build
+```
+
+| Servicio | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8080/api/v1 |
+| Estado y circuitos | http://localhost:8080/actuator/health · http://localhost:8080/actuator/circuitbreakers |
+| Proveedor A (stub) | http://localhost:9001 |
+| Proveedor B (stub) | http://localhost:9002 |
+
+La base arranca con cuatro reglas: `ABC-123` (`AUTO`), `XYZ-789` (`PROVIDER_A`), `LMN-456` (`PROVIDER_B`) y `OLD-001` (inactiva). Las credenciales de PostgreSQL tienen valores por defecto; para cambiarlas, copiar `.env.example` a `.env`.
+
+| Método | Ruta | Respuestas |
+|---|---|---|
+| `POST` | `/api/v1/product-rules` | 201 · 400 validación · 409 SKU duplicado |
+| `GET` | `/api/v1/product-rules` | 200 |
+| `PUT` | `/api/v1/product-rules/{sku}` | 200 · 400 · 404. Invalida la caché del SKU |
+| `DELETE` | `/api/v1/product-rules/{sku}` | 204 · 404. Borrado físico; para desactivar se usa `PUT` con `active: false`. Invalida la caché del SKU |
+| `GET` | `/api/v1/prices?sku={id}` | 200 · 404 inexistente · 422 inactivo · 503 sin proveedores ni respaldo |
+
+Los errores salen en formato ProblemDetail (RFC 9457) con un campo `code` estable y, en validaciones, `errors[]` por campo.
+
 ## 1. Diagrama end-to-end
 
 ```mermaid
 flowchart LR
     UI["Frontend<br/>React + TypeScript"]
     API["Backend<br/>Spring Boot 4 · Java 21"]
-    DB[("Base de datos<br/>ProductRule")]
+    DB[("PostgreSQL<br/>ProductRule")]
     CACHE[("Caché Caffeine<br/>cotizaciones por SKU")]
     A["Proveedor A<br/>50–150 ms"]
     B["Proveedor B<br/>400–900 ms · 5 RPS"]
@@ -26,7 +54,7 @@ Flujo de `GET /api/v1/prices?sku={id}` con `preferredProvider = AUTO`:
 sequenceDiagram
     participant UI as Frontend
     participant API as Backend
-    participant DB as Base de datos
+    participant DB as PostgreSQL
     participant C as Caché
     participant A as Proveedor A
     participant B as Proveedor B
@@ -141,3 +169,50 @@ Por qué estos valores:
 - **Refresco asíncrono:** espera hasta 1 s por un permiso. Si no llega, el refresco se descarta y el siguiente miss lo vuelve a intentar.
 - **429 recibido:** las llamadas a B se pausan 1 s, o lo que indique `Retry-After`. Recibir un 429 es la excepción, no el mecanismo de control.
 - La deduplicación por SKU (sección 3) evita que una ráfaga del mismo SKU gaste más de un permiso.
+
+## Pruebas
+
+```bash
+cd backend && ./mvnw test
+```
+
+Requiere Java 21 y Docker (Testcontainers levanta PostgreSQL 18). Son 69 pruebas sin `Thread.sleep`: el tiempo avanza con un reloj controlado, los proveedores se simulan con WireMock y el refresco en segundo plano corre en el mismo hilo.
+
+| Caso pedido | Prueba |
+|---|---|
+| Acierto de caché e invalidación por `PUT` | `PriceQueryIntegrationTest.servesRepeatedQueryFromCacheAndRecalculatesAfterMarginUpdate` |
+| Proveedor A caído → failover a B | `PriceQueryIntegrationTest.failsOverToProviderBWhenProviderAIsDown` |
+| Ambos caídos → respuesta degradada | `PriceQueryIntegrationTest.servesFallbackCacheWhenBothProvidersAreDown` y `answersWithControlledErrorWhenBothProvidersAreDownAndNothingIsCached` |
+| Expiración del TTL | `PriceQueryIntegrationTest.queriesProviderAgainOnceTheTtlExpires` |
+| Circuit breaker | `PriceQueryIntegrationTest.opensProviderACircuitAndStopsCallingIt` |
+| Rate limit de B | `ProviderBRateLimitIntegrationTest.neverSendsMoreThanFiveRequestsPerSecondToProviderB` |
+
+Prueba de carga, con el sistema levantado (`PROFILE` = `hot`, `mixed` o `worst`):
+
+```bash
+docker run --rm --network price-consolidation-app_default \
+  -v "$PWD/load-test:/scripts:ro" -e PROFILE=mixed \
+  grafana/k6:2.3.0 run /scripts/prices.js
+```
+
+Se ejecuta dentro de la red del compose: desde el host, el reenvío de puertos de Docker Desktop agregó cortes de conexión de 30 s que no venían del backend.
+
+## Escenarios a mano
+
+Los stubs aceptan `POST /__control` con `{"mode": "up" | "down" | "timeout" | "error"}` y cambian de comportamiento sin reiniciarse. `down` responde 503, `error` 500 y `timeout` no responde en 10 s.
+
+```bash
+curl -X POST localhost:9001/__control -H 'Content-Type: application/json' -d '{"mode":"down"}'
+```
+
+| Escenario | Pasos | Resultado |
+|---|---|---|
+| Caché | Consultar `ABC-123` dos veces | `PROVIDER_A` y luego `CACHE` |
+| Dato obsoleto de A | Consultar `ABC-123` hasta ver `stale: true` y repetir pasado 1 s | `CACHE` con `providerSource: PROVIDER_B` |
+| Failover | A en `down`, consultar `XYZ-789` | `PROVIDER_B` |
+| Respaldo | Consultar `LMN-456`, esperar 30 s, A y B en `down`, consultar | `FALLBACK_CACHE` con `stale: true` |
+| Sin proveedores ni respaldo | A y B en `down`, crear una regla nueva y consultarla | 503 `PROVIDERS_UNAVAILABLE` |
+| SKU inactivo | Consultar `OLD-001` | 422 `SKU_INACTIVE` |
+| Invalidación | Consultar `ABC-123`, editar su margen, consultar | Precio recalculado con la fuente del proveedor, no `CACHE` |
+
+Todos se pueden repetir desde la UI: el panel «Consultar precio» acepta cualquier SKU.
