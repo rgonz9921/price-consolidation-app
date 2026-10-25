@@ -9,11 +9,14 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 
 @Entity
 @Table(name = "product_rule")
 public class ProductRule {
+
+    private static final int PRICE_SCALE = 2;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -62,6 +65,11 @@ public class ProductRule {
         this.preferredProvider = preferredProvider;
         this.active = active;
         this.updatedAt = updatedAt;
+    }
+
+    public BigDecimal applyMargin(BigDecimal providerPrice) {
+        var factor = BigDecimal.ONE.add(marginPercentage.movePointLeft(2));
+        return providerPrice.multiply(factor).setScale(PRICE_SCALE, RoundingMode.HALF_UP);
     }
 
     public Long getId() {

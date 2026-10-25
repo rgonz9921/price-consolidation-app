@@ -61,7 +61,7 @@ sequenceDiagram
 
 Cada consulta sigue estos pasos:
 
-1. Se busca la regla del SKU. Si no existe o está inactiva, se responde con un error controlado sin tocar caché ni proveedores.
+1. Se busca la regla del SKU. Si no existe se responde 404 (`PRODUCT_RULE_NOT_FOUND`), y si está inactiva 422 (`SKU_INACTIVE`), sin tocar caché ni proveedores.
 2. Si la caché tiene una cotización de menos de 30 s, se responde con `source: CACHE`.
 3. Si no, se consulta según `preferredProvider`:
 
@@ -73,10 +73,12 @@ Cada consulta sigue estos pasos:
 
 "Falla" incluye error de conexión, 5xx, timeout, circuito abierto, bulkhead lleno o falta de permiso del limitador.
 
-4. Si ambos proveedores fallan, se responde con la última cotización conocida (hasta 30 min de antigüedad) con `source: FALLBACK_CACHE` y `stale: true`. Si no hay ninguna, la respuesta degradada se devuelve igual de forma controlada, nunca como excepción.
-5. `finalPrice = providerPrice × (1 + marginPercentage / 100)`, con el margen de la regla vigente al momento de responder.
+4. Si ambos proveedores fallan, se responde con la última cotización conocida (hasta 30 min de antigüedad) con `source: FALLBACK_CACHE` y `stale: true`. Si no hay ninguna, se responde 503 (`PROVIDERS_UNAVAILABLE`) en formato ProblemDetail con `Retry-After: 10`, el tiempo que un circuito pasa abierto. Nunca sale una excepción cruda.
+5. `finalPrice = providerPrice × (1 + marginPercentage / 100)`, con el margen de la regla vigente al momento de responder, redondeado a 2 decimales con `HALF_UP`.
 
-**Consolidación.** Cuando llega una segunda cotización del mismo SKU (el refresco de B o un failover), se queda la más reciente según el instante que informa el proveedor: `lastUpdated` en A, `timestamp` en B (epoch en segundos). La frescura del dato decide, no la fuente.
+La respuesta es la del enunciado más un campo, `providerSource` (`PROVIDER_A` o `PROVIDER_B`). Con `source: CACHE` o `FALLBACK_CACHE` ese campo indica de qué proveedor vino el dato guardado. `responseTimeMs` mide el tiempo dentro del servicio: base de datos, caché y proveedores, sin la serialización JSON.
+
+**Consolidación.** Cuando el refresco en segundo plano trae una cotización de B, reemplaza a la guardada solo si es más reciente según el instante que informa cada proveedor (`lastUpdated` en A, `timestamp` en B, epoch en segundos) y si está en la misma moneda. La frescura del dato decide, no la fuente. Una consulta síncrona (incluido el failover) obtiene una sola cotización y la guarda tal cual.
 
 **Por qué cumple p95 < 800 ms.** El p95 es global: alcanza con que menos del 5 % de las peticiones pase de 800 ms.
 
@@ -99,7 +101,7 @@ Cada consulta sigue estos pasos:
 
 **Invalidación desde el CRUD.** `PUT /api/v1/product-rules/{sku}` y `DELETE /api/v1/product-rules/{sku}` borran la entrada de ese SKU. Esto incluye el dato de respaldo, porque es una sola entrada. La siguiente consulta vuelve a los proveedores con la regla nueva. Como el margen no está en la caché, si un refresco que ya estaba en vuelo escribe después de la invalidación, solo deja una cotización válida: el precio final siempre sale con el margen actual.
 
-**Ráfagas del mismo SKU.** Los misses simultáneos de un SKU comparten una única llamada al proveedor (single-flight con `AsyncCache` de Caffeine). Una ráfaga de 50 peticiones genera 1 llamada a A y, como máximo, 1 refresco a B.
+**Ráfagas del mismo SKU.** Los misses simultáneos de un SKU comparten una única carga (single-flight): la primera petición registra su carga en un mapa por SKU y las demás esperan ese mismo resultado. No se usa `AsyncCache.get` de Caffeine porque solo carga cuando la clave no existe, y aquí la entrada sigue presente 30 min como respaldo aunque ya no esté fresca. Una ráfaga de 50 peticiones genera 1 llamada a A y, como máximo, 1 refresco a B.
 
 **Por qué en memoria y no Redis.** El sistema corre en una sola instancia. Caffeine responde sin red, y en las pruebas el tiempo se controla sin esperas. Con varias instancias, la invalidación tendría que ser compartida y habría que pasar a Redis.
 
