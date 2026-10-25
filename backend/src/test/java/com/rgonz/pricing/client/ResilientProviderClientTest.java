@@ -61,6 +61,32 @@ class ResilientProviderClientTest {
     }
 
     @Test
+    void ignoresInteractiveTimeoutsButCountsBackgroundTimeouts() {
+        var provider = new ScriptedProvider(call -> {
+            throw new ProviderTimeoutException(
+                    Provider.PROVIDER_B, call <= 20 ? QuoteMode.INTERACTIVE : QuoteMode.BACKGROUND, null);
+        });
+        var circuitBreaker = CircuitBreaker.of(
+                "ignores-interactive-timeouts",
+                CircuitBreakerConfig.from(circuitBreaker().getCircuitBreakerConfig())
+                        .ignoreException(new InteractiveTimeoutPredicate())
+                        .build());
+        var client = resilient(provider, circuitBreaker, noRetry(), roomyBulkhead(), Optional.empty());
+
+        for (int i = 0; i < 20; i++) {
+            assertThatThrownBy(() -> client.quote(SKU, QuoteMode.INTERACTIVE))
+                    .isInstanceOf(ProviderTimeoutException.class);
+        }
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> client.quote(SKU, QuoteMode.BACKGROUND))
+                    .isInstanceOf(ProviderTimeoutException.class);
+        }
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
     void keepsCircuitClosedWhenProviderOnlyRateLimits() {
         var provider = new ScriptedProvider(call -> {
             throw new ProviderRateLimitedException(Provider.PROVIDER_B, Optional.empty());
@@ -162,7 +188,7 @@ class ResilientProviderClientTest {
     @Test
     void doesNotRetryTimeouts() {
         var provider = new ScriptedProvider(call -> {
-            throw new ProviderTimeoutException(Provider.PROVIDER_A, null);
+            throw new ProviderTimeoutException(Provider.PROVIDER_A, QuoteMode.INTERACTIVE, null);
         });
         var client = resilient(provider, circuitBreaker(), retryOnce(), roomyBulkhead(), Optional.empty());
 

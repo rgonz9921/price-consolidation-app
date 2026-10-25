@@ -3,6 +3,9 @@ package com.rgonz.pricing.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.rgonz.pricing.TestcontainersConfig;
+import com.rgonz.pricing.client.QuoteMode;
+import com.rgonz.pricing.exception.ProviderTimeoutException;
+import com.rgonz.pricing.model.Provider;
 import io.github.resilience4j.bulkhead.BulkheadRegistry;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -46,6 +49,25 @@ class ResilienceConfigurationTest {
         assertThat(providerA.getSlowCallDurationThreshold()).isEqualTo(Duration.ofMillis(250));
         assertThat(providerA.getPermittedNumberOfCallsInHalfOpenState()).isEqualTo(3);
         assertThat(providerB.getSlowCallDurationThreshold()).isEqualTo(Duration.ofMillis(900));
+    }
+
+    @Test
+    void onlyProviderBIgnoresItsOwnInteractiveTimeouts() {
+        var interactiveTimeout = new ProviderTimeoutException(Provider.PROVIDER_B, QuoteMode.INTERACTIVE, null);
+        var backgroundTimeout = new ProviderTimeoutException(Provider.PROVIDER_B, QuoteMode.BACKGROUND, null);
+        var providerA = circuitBreakers.circuitBreaker("providerA").getCircuitBreakerConfig();
+        var providerB = circuitBreakers.circuitBreaker("providerB").getCircuitBreakerConfig();
+
+        assertThat(providerB.getIgnoreExceptionPredicate().test(interactiveTimeout))
+                .isTrue();
+        assertThat(providerB.getIgnoreExceptionPredicate().test(backgroundTimeout))
+                .isFalse();
+        assertThat(providerB.getRecordExceptionPredicate().test(backgroundTimeout))
+                .isTrue();
+        assertThat(providerA.getIgnoreExceptionPredicate().test(interactiveTimeout))
+                .isFalse();
+        assertThat(providerA.getRecordExceptionPredicate().test(interactiveTimeout))
+                .isTrue();
     }
 
     @Test

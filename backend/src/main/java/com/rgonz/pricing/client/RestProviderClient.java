@@ -38,7 +38,7 @@ abstract class RestProviderClient implements ProviderClient {
             }
             return body;
         } catch (ResourceAccessException e) {
-            throw translateIoFailure(e);
+            throw translateIoFailure(e, mode);
         } catch (RestClientException e) {
             throw new ProviderUnavailableException(provider(), "unreadable body", e);
         }
@@ -66,10 +66,10 @@ abstract class RestProviderClient implements ProviderClient {
                 .map(seconds -> Duration.ofSeconds(Long.parseLong(seconds)));
     }
 
-    private RuntimeException translateIoFailure(ResourceAccessException e) {
+    private RuntimeException translateIoFailure(ResourceAccessException e, QuoteMode mode) {
         var cause = e.getCause();
         if (cause instanceof HttpTimeoutException && !(cause instanceof HttpConnectTimeoutException)) {
-            return new ProviderTimeoutException(provider(), e);
+            return new ProviderTimeoutException(provider(), mode, e);
         }
         return new ProviderUnavailableException(provider(), "connection failed", e);
     }

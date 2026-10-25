@@ -87,6 +87,16 @@ La respuesta es la del enunciado más un campo, `providerSource` (`PROVIDER_A` o
 - Failover A → B: si A falla rápido (conexión o 5xx), el total es A + B ≤ 750 ms. Si A falla por timeout, el peor caso es 300 + 750 = 1050 ms, pero solo mientras el circuito de A sigue cerrado. Con 10 llamadas evaluadas y la mitad fallando se abre, A se salta sin esperar y el failover queda en ≤ 750 ms.
 - Miss de `PROVIDER_B`: B tiene un timeout de 750 ms en la ruta síncrona, lo que corta el 30 % de sus llamadas (B tarda 400–900 ms). En ese 30 %, el failover a A suma hasta 300 ms. El p95 se mantiene mientras los misses de SKUs `PROVIDER_B` sean menos del ~16 % del tráfico (0,3 × 16 % ≈ 5 %). Con TTL de 30 s y ráfagas del mismo SKU, la gran mayoría de las peticiones son aciertos de caché.
 
+**Medición.** Con k6 dentro de la red del compose (`load-test/prices.js`), 60 s por perfil, midiendo solo `GET /api/v1/prices`:
+
+| Perfil | Tráfico | p95 | Errores |
+|---|---|---|---|
+| Ráfagas sobre SKUs repetidos | 200 consultas/s sobre 3 SKUs | 2,7 ms | 0 de ~12 000 |
+| Mezcla con misses | 200 consultas/s sobre 50 SKUs (`AUTO`, `PROVIDER_A`, `PROVIDER_B`) | 2,8 ms | 0 de ~12 100 |
+| Peor caso | 10 consultas/s, todas misses de SKUs `PROVIDER_B` distintos | 861–875 ms | 0 de 600 |
+
+El peor caso supera los 800 ms tal como se calculó arriba: el 100 % del tráfico son misses de `PROVIDER_B`, muy por encima del ~16 % que el diseño tolera. Es el límite conocido de la estrategia, no un fallo: ninguna consulta terminó en error.
+
 ## 3. Caché e invalidación
 
 | Aspecto | Valor |
@@ -114,14 +124,14 @@ La respuesta es la del enunciado más un campo, `providerSource` (`PROVIDER_A` o
 | Timeout de conexión | 100 ms | 200 ms |
 | Timeout de lectura | 300 ms | 750 ms síncrono · 1000 ms asíncrono |
 | Reintentos | 1, con backoff de 50 ms + jitter, solo ante error de conexión o 5xx | Ninguno |
-| Circuit breaker | Ventana de 20 llamadas, mínimo 10. Abre con 50 % de fallos o 80 % de llamadas lentas (> 250 ms). 10 s abierto, 3 llamadas en semiabierto | Igual, con llamada lenta > 900 ms |
+| Circuit breaker | Ventana de 20 llamadas, mínimo 10. Abre con 50 % de fallos o 80 % de llamadas lentas (> 250 ms). 10 s abierto, 3 llamadas en semiabierto | Igual, con llamada lenta > 900 ms. No cuenta sus timeouts síncronos de 750 ms |
 | Bulkhead (semáforo) | 50 concurrentes, sin espera | 10 concurrentes, sin espera |
 
 Por qué estos valores:
 
 - **Timeouts.** A tiene el doble de su latencia máxima. B tiene dos plazos: cuando el usuario espera, 750 ms protege el p95 aunque corte el 30 % de las llamadas; en el refresco asíncrono nadie espera, así que 1000 ms no corta ninguna.
 - **Reintentos.** Reintentar después de un timeout de 300 ms rompería el p95, por eso A reintenta solo ante fallos rápidos. B no reintenta porque cada intento gasta cupo del límite de 5 RPS. El failover al otro proveedor cumple el papel de segundo intento.
-- **Circuit breaker.** Con tráfico alto, 20 llamadas se juntan en menos de un segundo, así que una caída se detecta casi enseguida. Cada 10 s se prueba si el proveedor volvió. El umbral de lentitud de B (900 ms) es su máximo normal, para que su lentitud propia no abra el circuito.
+- **Circuit breaker.** Con tráfico alto, 20 llamadas se juntan en menos de un segundo, así que una caída se detecta casi enseguida. Cada 10 s se prueba si el proveedor volvió. El umbral de lentitud de B (900 ms) es su máximo normal, para que su lentitud propia no abra el circuito. En B, el circuito ignora los timeouts de la ruta síncrona: ese corte de 750 ms es una decisión nuestra que afecta a ~30 % de llamadas sanas. Si contaran, una ventana de 20 llamadas llegaría al 50 % de fallos por azar (≈ 4,8 % de probabilidad en cada evaluación) y el circuito se abriría sin que B estuviera caído; se observó en la prueba de carga antes de este ajuste. Siguen contando los 5xx, los errores de conexión y los timeouts del refresco en segundo plano.
 - **Bulkhead.** Con hilos virtuales, un semáforo alcanza para aislar. B tiene unas 5 llamadas en vuelo (4–5 RPS × ~0,9 s), y el límite de 10 deja margen. Sin cupo no se hace cola: se pasa al failover o a la caché.
 
 ## 5. Rate limit del Proveedor B
