@@ -1,5 +1,6 @@
 package com.rgonz.pricing.exception;
 
+import com.rgonz.pricing.config.PriceProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import java.util.List;
@@ -26,6 +27,12 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ApiExceptionHandler.class);
 
+    private final PriceProperties priceProperties;
+
+    public ApiExceptionHandler(PriceProperties priceProperties) {
+        this.priceProperties = priceProperties;
+    }
+
     public record InvalidField(String field, String message) {}
 
     @ExceptionHandler(ProductRuleNotFoundException.class)
@@ -36,6 +43,23 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DuplicateSkuException.class)
     public ProblemDetail handleDuplicateSku(DuplicateSkuException e, HttpServletRequest request) {
         return problem(HttpStatus.CONFLICT, "SKU_ALREADY_EXISTS", e.getMessage(), request.getRequestURI());
+    }
+
+    @ExceptionHandler(SkuInactiveException.class)
+    public ProblemDetail handleInactiveSku(SkuInactiveException e, HttpServletRequest request) {
+        return problem(HttpStatus.UNPROCESSABLE_CONTENT, "SKU_INACTIVE", e.getMessage(), request.getRequestURI());
+    }
+
+    @ExceptionHandler(ProvidersUnavailableException.class)
+    public ResponseEntity<ProblemDetail> handleProvidersUnavailable(
+            ProvidersUnavailableException e, HttpServletRequest request) {
+        var body = problem(
+                HttpStatus.SERVICE_UNAVAILABLE, "PROVIDERS_UNAVAILABLE", e.getMessage(), request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(
+                        HttpHeaders.RETRY_AFTER,
+                        String.valueOf(priceProperties.unavailableRetryAfter().toSeconds()))
+                .body(body);
     }
 
     @ExceptionHandler(Exception.class)
